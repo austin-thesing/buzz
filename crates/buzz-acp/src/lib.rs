@@ -3740,7 +3740,11 @@ async fn run_models(args: ModelsArgs) -> Result<()> {
         if !config_options.is_empty() {
             println!("Models (stable configOptions):");
             for opt in &config_options {
-                let config_id = opt.get("configId").and_then(|v| v.as_str()).unwrap_or("?");
+                let config_id = opt
+                    .get("id")
+                    .or_else(|| opt.get("configId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let display = opt
                     .get("displayName")
                     .and_then(|v| v.as_str())

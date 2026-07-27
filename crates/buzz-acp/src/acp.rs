@@ -1876,7 +1876,13 @@ pub fn resolve_model_switch_method(
     // 1. Search stable configOptions for a "model"-category entry whose
     //    options contain a value matching desired_model.
     for config_opt in extract_model_config_options(session_new_result) {
-        let config_id = match config_opt.get("configId").and_then(|v| v.as_str()) {
+        // ACP clients in the wild use both the spec's `id` spelling and the
+        // older `configId` spelling. OpenCode and Cursor currently emit `id`.
+        let config_id = match config_opt
+            .get("id")
+            .or_else(|| config_opt.get("configId"))
+            .and_then(|v| v.as_str())
+        {
             Some(id) => id,
             None => continue,
         };
@@ -2435,6 +2441,25 @@ mod tests {
             Some(super::ModelSwitchMethod::ConfigOption {
                 config_id: "model".to_string(),
                 option_value: "claude-sonnet-4-20250514".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_accepts_id_spelling_used_by_opencode_and_cursor() {
+        let result = serde_json::json!({
+            "configOptions": [{
+                "id": "model",
+                "category": "model",
+                "options": [{ "value": "openrouter/openai/gpt-5.5" }]
+            }]
+        });
+        let method = super::resolve_model_switch_method(&result, "openrouter/openai/gpt-5.5");
+        assert_eq!(
+            method,
+            Some(super::ModelSwitchMethod::ConfigOption {
+                config_id: "model".to_string(),
+                option_value: "openrouter/openai/gpt-5.5".to_string(),
             })
         );
     }
