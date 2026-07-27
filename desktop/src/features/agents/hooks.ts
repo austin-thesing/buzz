@@ -21,6 +21,7 @@ import { evictUsersBatchEntries } from "@/features/profile/hooks";
 import {
   createManagedAgent,
   deleteManagedAgent,
+  deleteCustomHarness,
   discoverAcpRuntimes,
   discoverBackendProviders,
   discoverGitBashPrerequisite,
@@ -34,14 +35,17 @@ import {
   installAcpRuntime,
   listManagedAgents,
   listRelayAgents,
+  saveCustomHarness,
   updateManagedAgent,
 } from "@/shared/api/tauri";
+import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import {
   setManagedAgentAutoRestart,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,
   stopManagedAgent,
 } from "@/shared/api/tauriManagedAgents";
+import { bootstrapManagedAgentRuntimePairs } from "@/features/agents/managedAgentRuntimeHooks";
 import {
   createPersona,
   deletePersona,
@@ -59,24 +63,16 @@ import {
   setPersonaActive,
   updatePersona,
 } from "@/shared/api/tauriPersonas";
-import {
-  createTeam,
-  deleteTeam,
-  listTeams,
-  updateTeam,
-} from "@/shared/api/tauriTeams";
+import { teamsQueryKey } from "@/features/agents/teamHooks";
 import type {
   AcpRuntime,
   AgentPersona,
-  AgentTeam,
   Channel,
   CreateManagedAgentInput,
   CreatePersonaInput,
-  CreateTeamInput,
   ManagedAgent,
   UpdateManagedAgentInput,
   UpdatePersonaInput,
-  UpdateTeamInput,
 } from "@/shared/api/types";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import type {
@@ -89,6 +85,13 @@ import type {
   ProvisionChannelManagedAgentResult,
 } from "@/features/agents/channelAgents";
 export { findReusableAgent } from "@/features/agents/agentReuse";
+export {
+  teamsQueryKey,
+  useCreateTeamMutation,
+  useDeleteTeamMutation,
+  useTeamsQuery,
+  useUpdateTeamMutation,
+} from "@/features/agents/teamHooks";
 export type {
   AttachManagedAgentToChannelInput,
   AttachManagedAgentToChannelResult,
@@ -104,7 +107,6 @@ export type {
 export const relayAgentsQueryKey = ["relay-agents"] as const;
 export const managedAgentsQueryKey = ["managed-agents"] as const;
 export const personasQueryKey = ["personas"] as const;
-export const teamsQueryKey = ["teams"] as const;
 export const acpRuntimesQueryKey = ["acp-runtimes"] as const;
 export const acpAuthMethodsQueryKey = ["acp-auth-methods"] as const;
 export const managedAgentPrereqsQueryKey = ["managed-agent-prereqs"] as const;
@@ -238,6 +240,32 @@ export function useInstallAcpRuntimeMutation() {
   });
 }
 
+export function useSaveCustomHarnessMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      definition,
+      originalId,
+    }: {
+      definition: HarnessDefinitionInput;
+      originalId?: string;
+    }) => saveCustomHarness(definition, originalId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+    },
+  });
+}
+
+export function useDeleteCustomHarnessMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deleteCustomHarness(id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: acpRuntimesQueryKey });
+    },
+  });
+}
+
 export function useGitBashPrerequisiteQuery() {
   return useQuery({
     queryKey: gitBashPrerequisiteQueryKey,
@@ -255,8 +283,9 @@ export function useBackendProvidersQuery(options?: { enabled?: boolean }) {
   });
 }
 
-export function usePersonasQuery() {
+export function usePersonasQuery(options?: { enabled?: boolean }) {
   return useQuery({
+    enabled: options?.enabled ?? true,
     queryKey: personasQueryKey,
     queryFn: listPersonas,
     staleTime: 30_000,
@@ -347,6 +376,12 @@ export function useCreateManagedAgentMutation() {
           ];
         },
       );
+
+      // The create command spawns only the active community's pair — kick a
+      // reconcile so the new agent gets a lazy pair in every other community.
+      if (created.agent.backend.type === "local") {
+        bootstrapManagedAgentRuntimePairs(queryClient);
+      }
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
@@ -940,55 +975,5 @@ export function useBakedBuildEnvKeysQuery(options?: { enabled?: boolean }) {
     staleTime: Infinity,
     refetchInterval: false,
     retry: false,
-  });
-}
-
-export function useTeamsQuery() {
-  return useQuery({
-    queryKey: teamsQueryKey,
-    queryFn: listTeams,
-    staleTime: 30_000,
-    // No refetchInterval: inbound relay team changes emit `agents-data-changed`
-    // (handled by useAgentsDataRefresh). Same redundant-poll removal as
-    // usePersonasQuery.
-  });
-}
-
-export function useCreateTeamMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (input: CreateTeamInput) => createTeam(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<AgentTeam[]>(teamsQueryKey, (current) => {
-        const next = current ?? [];
-        return [created, ...next.filter((team) => team.id !== created.id)];
-      });
-    },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: teamsQueryKey });
-    },
-  });
-}
-
-export function useUpdateTeamMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (input: UpdateTeamInput) => updateTeam(input),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: teamsQueryKey });
-    },
-  });
-}
-
-export function useDeleteTeamMutation() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => deleteTeam(id),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: teamsQueryKey });
-    },
   });
 }

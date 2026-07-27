@@ -46,7 +46,12 @@ use huddle::{
     join_huddle, leave_huddle, push_audio_pcm, set_huddle_transcription_enabled, set_tts_enabled,
     set_voice_input_mode, speak_agent_message, start_huddle, start_stt_pipeline,
 };
-use managed_agents::{backfill_persona_snapshots, ensure_nest, try_regenerate_nest};
+use managed_agents::{
+    backfill_persona_snapshots, ensure_nest, list_managed_agent_runtimes,
+    put_managed_agent_runtime_lifecycle, reconcile_managed_agent_runtimes,
+    restart_managed_agent_runtime, start_managed_agent_runtime, stop_managed_agent_runtime,
+    try_regenerate_nest,
+};
 #[cfg(not(feature = "mesh-llm"))]
 use mesh_llm_stubs::*;
 #[cfg(all(feature = "mesh-llm", target_os = "macos"))]
@@ -433,6 +438,21 @@ pub fn run() {
                 eprintln!("buzz-desktop: persona-snapshot backfill failed: {e}");
             }
 
+            // Warm the loaded-harness registry BEFORE restore so cold-launch
+            // agent spawns can resolve custom/preset runtime ids without
+            // waiting for the frontend's discover_acp_providers call.  This is
+            // a pure directory scan — no PATH probing, no async work.
+            {
+                let custom_dir = app_handle
+                    .path()
+                    .app_data_dir()
+                    .ok()
+                    .map(|d| d.join("custom_harnesses"));
+                managed_agents::custom_harnesses::warm_harness_registry_from_dir(
+                    custom_dir.as_deref(),
+                );
+            }
+
             // Store the AppHandle so huddle commands can emit `huddle-state-changed`
             // events via `huddle::emit_huddle_state` without threading the handle
             // through every call site.
@@ -456,7 +476,7 @@ pub fn run() {
             }
 
             // Start the localhost media streaming proxy. Uses the shared HTTP
-            // client so WARP tunnelling applies. The port is stored in AppState
+            // client so VPN tunnelling applies. The port is stored in AppState
             // and exposed to the frontend via the `get_media_proxy_port` command.
             let proxy_client = state.http_client.clone();
             let proxy_handle = app_handle.clone();
@@ -662,6 +682,7 @@ pub fn run() {
             persist_current_identity,
             get_profile,
             update_profile,
+            update_profile_at_relay,
             get_user_profile,
             get_users_batch,
             get_user_notes,
@@ -677,6 +698,7 @@ pub fn run() {
             delete_project_remote_branch,
             push_project_local_repository,
             pull_project_local_repository,
+            sign_project_pull_request_status,
             sign_project_pull_request_review_request,
             publish_project_pull_request_merged_status,
             merge_project_pull_request,
@@ -686,6 +708,7 @@ pub fn run() {
             get_presence,
             get_os_idle_seconds,
             get_default_relay_url,
+            auto_connect_default_relay_enabled,
             get_legacy_workspace_storage,
             is_shared_identity,
             get_relay_ws_url,
@@ -696,6 +719,8 @@ pub fn run() {
             discover_acp_providers,
             discover_git_bash_prerequisite,
             install_acp_runtime,
+            save_custom_harness,
+            delete_custom_harness,
             connect_acp_runtime,
             discover_managed_agent_prereqs,
             sign_event,
@@ -766,6 +791,12 @@ pub fn run() {
             resolve_oa_owner,
             list_relay_agents,
             list_managed_agents,
+            list_managed_agent_runtimes,
+            start_managed_agent_runtime,
+            stop_managed_agent_runtime,
+            restart_managed_agent_runtime,
+            reconcile_managed_agent_runtimes,
+            put_managed_agent_runtime_lifecycle,
             create_managed_agent,
             start_managed_agent,
             stop_managed_agent,
@@ -786,6 +817,7 @@ pub fn run() {
             mesh_start_node,
             mesh_stop_node,
             mesh_node_status,
+            mesh_serving_usage,
             mesh_installed_models,
             mesh_model_catalog,
             update_managed_agent,
